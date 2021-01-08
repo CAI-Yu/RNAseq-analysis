@@ -1,0 +1,135 @@
+---
+title: "Airway data practice"
+author: "MYu"
+date: "1/7/2021"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+This is a practice for RNAseq data analysis.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(airway)
+```
+load this dataset by using data() function
+```{r}
+data("airway")
+```
+check the data by looking head of the data and summary
+```{r}
+summary(airway)
+head(airway)
+```
+airway is a so-called RangedSummarizedExperiment class object. to make it simple, we need to convert it to matrix.
+```{r}
+count_data = assay(airway)
+head(count_data)
+```
+convert data to dataframe, since dataframe is more familiar to us and easy to use, also add annotation
+information
+```{r}
+anno = as.data.frame(colData(airway))
+anno = anno[, c("cell", "dex")]
+anno
+class(anno)
+```
+count_data and anno data set will be used for following analysis. count_data should have the colnames the same as rownames of anno
+```{r}
+colnames(count_data) == rownames(anno)
+```
+All TRUE mean the colnames of count_data is the same as rownames of anno
+
+Then let's check how many genes and how many samples in count_data, we need the total number of counts as library size to do gene normalization to remove systematic bias.
+```{r}
+dim(count_data)
+nrow(count_data)
+library_size = colSums(count_data)
+library_size
+```
+Use DESeq2 to do the normalization. DESeq2 normalization is a more advanced method. To show the problem when comparing counts for two samples:
+```{r}
+plot(log2(count_data[,1]+1), log2(count_data[,2]+1), pch=16, cex= 0.3, col="#00000040")
+```
+Just compare the first two column of samples, we can see for the lowly expressed genes, the cross-sample variance gets higher. We can also observe if we directly plot the cross-sample mean verse cross-sample standard deviation:
+```{r}
+plot(apply(log2(count_data +1), 1, mean), apply(log2(count_data+1),1,sd), pch=16, cex= 0.3, col="#00000040")
+```
+It shows clearly the standard deviation increase for the lowly expressed genes, which means the variance is bigger in lowly expressed genes.
+
+DESeq2 package provides a function vst() which applies an algorithm called “variance Stabilization” and can reduce the noise from lowly expressed genes.
+
+Applying DESeq2 normalization is simple, just call vst() function:
+```{r}
+library(DESeq2)
+d_count = vst(count_data)
+```
+Now we make the scatterplot for the first and the second samples with the DESeq2 normalized values.
+```{r}
+plot(d_count[,1], d_count[,2],pch=16, cex= 0.3, col="#00000040")
+```
+
+After apply vst function, the variance is more stable now
+
+In following sections, we use the normalized matrix deseq2 for analysis.
+First we look at the qunatiles of each column:
+```{r}
+apply(d_count, 2, quantile)
+```
+When you have a lot of samples (let’s say more than 20), it is not possible to plot density distributions for all samples. Instead we can use heatmap to show density distributions:
+```{r}
+library(ComplexHeatmap)
+densityHeatmap(d_count, range = c(4, 6))
+```
+In the density heatmap, each column corresponds to one sample and colors are used to represent density values in the distribution.
+
+All these statistics and plots (quantiles, density distribution) show the global distribution or pattern are very similar between samples, in other words, there is no “bad samples” and all samples are comparible, and can be taken into downstream analysis.
+
+To make the heatmap and clustering, normally we only extract top n most variable genes.
+```{r}
+data_sds= apply(d_count, 1, sd)
+top_1k_gene= order(data_sds, decreasing = TRUE)[1:1000]
+data_h = d_count[top_1k_gene,]
+data_h_scale = t(scale(t(data_h)))
+Heatmap(data_h_scale, name = "expression", show_row_names = FALSE,
+    top_annotation = HeatmapAnnotation(df = anno, show_annotation_name = TRUE)
+)
+```
+The heatmap shows the two “N080611” cell types are more distinct from others while for the remaining samples, the main difference is due to “trt/untrt”.
+
+When cluster columns, hierarchical clustering is not always a good option. Since here we know there are two major groups in columns, we can apply k-means clustering for classification.
+```{r}
+km = kmeans(t(data_h_scale), centers = 2)
+km = km$cluster
+km
+```
+Now you can see each samples has a class label (either 1 or 2).
+
+We add the class label from k-means clustering to the heatmap. Note we do not apply hierarchical clustering on columns any more by setting cluster_columns = FALSE.
+```{r}
+Heatmap(data_h_scale, name = "expression", show_row_names = FALSE,
+    top_annotation = HeatmapAnnotation(df = anno, km = as.character(km), show_annotation_name = TRUE),
+    cluster_columns = FALSE, column_order = order(km), column_title = "by k-means clustering"
+)
+```
+To make the heatmap and clustering, normally we only extract top 50 most variable genes.
+```{r}
+top_50_gene= order(data_sds, decreasing = TRUE)[1:50]
+data_h50 = d_count[top_50_gene,]
+data_h50_scale = t(scale(t(data_h50)))
+km50 = kmeans(t(data_h50_scale), centers = 2)
+km50 = km50$cluster
+Heatmap(data_h50_scale, name = "expression", show_row_names = FALSE,
+    top_annotation = HeatmapAnnotation(df = anno, km50 = as.character(km50), show_annotation_name = TRUE),
+    cluster_columns = FALSE, column_order = order(km50), column_title = "by k-means clustering")
+```
+
+
+
+
+
+
+
+
